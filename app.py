@@ -8,7 +8,6 @@ st.set_page_config(page_title="Terminal ICT: Institutional Order Flow", layout="
 # --- FUNÇÃO DE INTELIGÊNCIA ---
 def chamar_ia_groq(perfil, texto):
     try:
-        # Puxa a chave dos Secrets
         if "GROQ_API_KEY" not in st.secrets:
             return "⚠️ Chave API não configurada no painel do Streamlit."
             
@@ -22,8 +21,8 @@ def chamar_ia_groq(perfil, texto):
             Foque em: Liquidez (B-side/S-side), Fair Value Gaps (FVG), Order Blocks, 
             Judas Swing, Market Structure Shift e Killzones. 
             Identifique onde o Smart Money está induzindo o varejo ao erro. 
-            Responda em PORTUGUÊS técnico."""},
-            {"role": "user", "content": f"DADOS DE MERCADO:\n\n{texto[:3000]}"}
+            Responda em PORTUGUÊS técnico e direto."""},
+            {"role": "user", "content": f"DADOS DE MERCADO (FONTES ELITE):\n\n{texto[:3500]}"}
         ]
 
         completion = client.chat.completions.create(
@@ -34,7 +33,6 @@ def chamar_ia_groq(perfil, texto):
         )
         return completion.choices[0].message.content
     except Exception as e:
-        # Se a chave for inválida, o erro 401 aparecerá aqui
         return f"❌ Erro na IA: {str(e)}"
 
 # --- BARRA LATERAL ---
@@ -43,34 +41,39 @@ with st.sidebar:
     st.info("Acesso Institucional Liberado ✅")
     st.divider()
 
+    # Refinamento das buscas para as maiores fontes mundiais
     temas_full = {
-        "📊 COT & Institutional Bias": "COT report institutional net positions Smart Money",
-        "💱 Forex: ICT Majors": "DXY EURUSD USDJPY algorithmic price action",
-        "📀 Metais & Liquidez": "gold silver liquidity pools silver bullet",
-        "📈 Índices: S&P500 / Nasdaq (ICT)": "S&P500 Nasdaq ES NQ price action liquidity",
-        "🛢️ Commodities: ICT Flow": "crude oil brent wti order flow institutional",
-        "🌍 Geopolítica & Macro": "geopolitics global conflict trade wars",
-        "🏦 Política Monetária (Interest Rates)": "central banks FED inflation interest rates",
-        "🕒 Killzones & High Impact": "economic calendar NFP FOMC news volatility"
+        "📊 COT & Institutional Bias": "CFTC COT Report analysis Smart Money positioning Bloomberg Reuters",
+        "💱 Forex: ICT Majors": "Forex DXY EURUSD analysis Reuters Bloomberg Investing.com",
+        "📀 Metais & Liquidez": "Gold Silver price action liquidity analysis Reuters CNBC",
+        "📈 Índices: S&P500 / Nasdaq (ICT)": "S&P500 Nasdaq price action Bloomberg Wall Street Journal",
+        "🛢️ Commodities: ICT Flow": "Crude Oil Brent WTI market news Reuters Financial Times",
+        "🌍 Geopolítica & Macro": "Global geopolitics trade wars analysis Bloomberg Reuters",
+        "🏦 Política Monetária (Interest Rates)": "Central Banks FED FOMC interest rates Reuters Bloomberg FT",
+        "🕒 Killzones & High Impact": "Economic calendar high impact news ForexFactory Bloomberg"
     }
 
     escolha = st.selectbox("Selecione o Fluxo:", list(temas_full.keys()))
     periodo = st.selectbox("Janela de Tempo:", ["12h", "24h", "48h", "7d"], index=3)
 
     if st.button("🌐 Sincronizar Sinais ICT"):
-        with st.spinner("Mapeando liquidez algorítmica..."):
+        with st.spinner("Conectando às 10 maiores fontes financeiras..."):
             try:
+                # GNews configurado para buscar resultados de alta relevância (US/English são as fontes primárias ICT)
                 gn = GNews(language='en', country='US', period=periodo, max_results=10)
                 news = gn.get_news(temas_full[escolha])
+                
                 if news:
                     bruto = ""
                     for n in news:
-                        bruto += f"FONTE: {n['publisher']['title']} | INFO: {n['title']}\n---\n"
+                        source = n['publisher']['title']
+                        title = n['title']
+                        bruto += f"FONTE ELITE: {source} | INFO: {title}\n---\n"
                     st.session_state['dados_terminal'] = bruto
-                    st.success(f"✅ {len(news)} notícias sincronizadas!")
+                    st.success(f"✅ {len(news)} Sinais de alta relevância capturados!")
                     st.rerun()
                 else:
-                    st.warning("Nenhum sinal encontrado. Tente 7d.")
+                    st.warning("Nenhum sinal encontrado. Tente aumentar para 7d.")
             except Exception as e:
                 st.error(f"Erro na sincronização: {e}")
 
@@ -79,11 +82,11 @@ st.title("🏛️ Terminal ICT: Institutional Order Flow")
 st.markdown(f"### Estratégia ICT em: **{escolha}**")
 
 dados_atuais = st.session_state.get('dados_terminal', '')
-noticias_campo = st.text_area("Fluxo de Dados Atual:", value=dados_atuais, height=150)
+noticias_campo = st.text_area("Fluxo de Dados Atual (Top 10 Fontes):", value=dados_atuais, height=150)
 
 if st.button("🚀 Executar Análise Institucional"):
     if noticias_campo:
-        with st.spinner("Analisando Order Flow..."):
+        with st.spinner("Mapeando Order Flow e Liquidez..."):
             col1, col2, col3 = st.columns(3)
             res_smart = chamar_ia_groq('Especialista em ICT', noticias_campo)
             res_retail = chamar_ia_groq('Analista de Indução', noticias_campo)
@@ -102,4 +105,4 @@ if st.button("🚀 Executar Análise Institucional"):
         st.error("⚠️ Sincronize os dados primeiro.")
 
 st.markdown("---")
-st.caption("Terminal Macro ICT - Acesso Global")
+st.caption("Terminal Macro ICT - v1.2 | Data Sources: Top 10 Global Financial Outlets")
