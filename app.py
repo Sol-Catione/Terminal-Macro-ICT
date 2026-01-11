@@ -5,15 +5,15 @@ from gnews import GNews
 # --- CONFIGURAÇÃO DA INTERFACE ---
 st.set_page_config(page_title="Terminal ICT: Institutional Order Flow", layout="wide", page_icon="🏛️")
 
-# --- FUNÇÃO DE INTELIGÊNCIA (USANDO SECRETS) ---
+# --- FUNÇÃO DE INTELIGÊNCIA ---
 def chamar_ia_groq(perfil, texto):
     try:
-        # Pega a chave automaticamente dos Secrets do Streamlit
+        # Puxa a chave dos Secrets
         if "GROQ_API_KEY" not in st.secrets:
-            return "⚠️ Erro: Chave API não configurada nos Secrets."
+            return "⚠️ Chave API não configurada no painel do Streamlit."
             
-        api_key = st.secrets["GROQ_API_KEY"]
-        client = Groq(api_key=api_key)
+        key = st.secrets["GROQ_API_KEY"]
+        client = Groq(api_key=key)
         modelo = "llama-3.1-8b-instant"
 
         messages = [
@@ -34,13 +34,13 @@ def chamar_ia_groq(perfil, texto):
         )
         return completion.choices[0].message.content
     except Exception as e:
+        # Se a chave for inválida, o erro 401 aparecerá aqui
         return f"❌ Erro na IA: {str(e)}"
 
-# --- BARRA LATERAL (PAINEL DE CONTROLE) ---
+# --- BARRA LATERAL ---
 with st.sidebar:
     st.header("⚙️ Painel ICT & Macro")
     st.info("Acesso Institucional Liberado ✅")
-
     st.divider()
 
     temas_full = {
@@ -62,7 +62,6 @@ with st.sidebar:
             try:
                 gn = GNews(language='en', country='US', period=periodo, max_results=10)
                 news = gn.get_news(temas_full[escolha])
-                
                 if news:
                     bruto = ""
                     for n in news:
@@ -71,51 +70,36 @@ with st.sidebar:
                     st.success(f"✅ {len(news)} notícias sincronizadas!")
                     st.rerun()
                 else:
-                    st.warning("Nenhum sinal encontrado. Tente aumentar para 7d.")
+                    st.warning("Nenhum sinal encontrado. Tente 7d.")
             except Exception as e:
                 st.error(f"Erro na sincronização: {e}")
 
-# --- PAINEL PRINCIPAL (INTERFACE DO TERMINAL) ---
+# --- PAINEL PRINCIPAL ---
 st.title("🏛️ Terminal ICT: Institutional Order Flow")
 st.markdown(f"### Estratégia ICT em: **{escolha}**")
 
-# Campo de dados (onde as notícias aparecem)
 dados_atuais = st.session_state.get('dados_terminal', '')
 noticias_campo = st.text_area("Fluxo de Dados Atual:", value=dados_atuais, height=150)
 
 if st.button("🚀 Executar Análise Institucional"):
     if noticias_campo:
-        with st.spinner("Identificando Order Blocks e FVG..."):
+        with st.spinner("Analisando Order Flow..."):
             col1, col2, col3 = st.columns(3)
+            res_smart = chamar_ia_groq('Especialista em ICT', noticias_campo)
+            res_retail = chamar_ia_groq('Analista de Indução', noticias_campo)
+            res_macro = chamar_ia_groq('Estrategista Macro', noticias_campo)
 
-            # Executa as 3 análises
-            res_smart = chamar_ia_groq('Especialista em ICT (Institutional Order Flow)', noticias_campo)
-            res_retail = chamar_ia_groq('Analista de Indução e Liquidez de Varejo', noticias_campo)
-            res_macro = chamar_ia_groq('Estrategista Macro & ICT Bias', noticias_campo)
-
-            with col1: 
-                st.info(f"🐋 **Institutional Flow (ICT)**\n\n{res_smart}")
-            with col2: 
-                st.error(f"🐟 **Retail Trap (Liquidez de Sardinha)**\n\n{res_retail}")
-            with col3: 
-                st.success(f"🦅 **Daily Bias (Direcionamento)**\n\n{res_macro}")
+            with col1: st.info(f"🐋 **Institutional Flow**\n\n{res_smart}")
+            with col2: st.error(f"🐟 **Retail Trap**\n\n{res_retail}")
+            with col3: st.success(f"🦅 **Daily Bias**\n\n{res_macro}")
 
             st.divider()
-            st.subheader("🎯 Matriz de Execução ICT")
-
-            contexto_plano = f"Flow: {res_smart}\nTrap: {res_retail}\nBias: {res_macro}"
-            prompt_plano = (
-                "Com base na análise ICT apresentada, gere um plano de execução curto com:\n"
-                "1. DAILY BIAS.\n"
-                "2. ZONAS DE LIQUIDEZ.\n"
-                "3. PONTO DE INTERESSE (POI).\n"
-                "4. GATILHO DE ENTRADA (MSS ou Judas Swing)."
-            )
-
-            veredito = chamar_ia_groq("Gestor ICT Senior", f"{prompt_plano}\n\nCONTEXTO: {contexto_plano}")
-            st.markdown(f"> **PLANO DE EXECUÇÃO INSTITUCIONAL:**\n\n{veredito}")
+            st.subheader("🎯 Plano de Execução")
+            ctx = f"Flow: {res_smart}\nTrap: {res_retail}\nBias: {res_macro}"
+            veredito = chamar_ia_groq("Gestor ICT Senior", f"Gere um plano curto com Bias, Liquidez e POI baseado nisso: {ctx}")
+            st.markdown(f"> **PLANO FINAL:**\n\n{veredito}")
     else:
-        st.error("⚠️ Sincronize os dados primeiro no menu à esquerda.")
+        st.error("⚠️ Sincronize os dados primeiro.")
 
 st.markdown("---")
-st.caption("Terminal Macro ICT - v1.1 Corrigido")
+st.caption("Terminal Macro ICT - Acesso Global")
