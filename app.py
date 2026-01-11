@@ -1,61 +1,106 @@
 import streamlit as st
 from groq import Groq
+from gnews import GNews
 
-# 1. CONFIGURAÇÃO DA PÁGINA
-st.set_page_config(page_title="Terminal Macro ICT", page_icon="📟", layout="wide")
+# --- CONFIGURAÇÃO DA INTERFACE ---
+st.set_page_config(page_title="Terminal ICT: Institutional Order Flow", layout="wide", page_icon="🏛️")
 
-# 2. CONEXÃO SEGURA COM A CHAVE API
-try:
-    # O sistema busca a chave nos Secrets para liberar o acesso público
+# --- FUNÇÃO DE INTELIGÊNCIA (AGORA USANDO SECRETS) ---
+def chamar_ia_groq(perfil, texto):
+    # Pega a chave automaticamente dos Secrets para o público acessar
     api_key = st.secrets["GROQ_API_KEY"]
-    client = Groq(api_key=api_key)
-except Exception:
-    st.error("Erro: Configure a GROQ_API_KEY nos Secrets do Streamlit.")
-    st.stop()
+    try:
+        client = Groq(api_key=api_key)
+        modelo = "llama-3.1-8b-instant"
 
-# 3. INTERFACE ORIGINAL
-st.title("📟 Terminal Macro ICT")
-st.markdown("---")
+        messages = [
+            {"role": "system", "content": f"""Você é um {perfil}. 
+            Utilize estritamente a metodologia ICT (Inner Circle Trader). 
+            Foque em: Liquidez (B-side/S-side), Fair Value Gaps (FVG), Order Blocks, 
+            Judas Swing, Market Structure Shift e Killzones. 
+            Identifique onde o Smart Money está induzindo o varejo ao erro. 
+            Responda em PORTUGUÊS técnico."""},
+            {"role": "user", "content": f"DADOS DE MERCADO:\n\n{texto[:3000]}"}
+        ]
 
-# Seus temas originais aprovados
-temas_originais = {
-    "📊 COT & Institutional Bias": "COT report institutional net positions Smart Money",
-    "💱 Forex: ICT Majors": "DXY EURUSD USDJPY algorithmic price action",
-    "📀 Metais & Liquidez": "gold silver liquidity pools silver bullet",
-    "📈 Índices: S&P500 / Nasdaq (ICT)": "S&P500 Nasdaq ES NQ price action liquidity",
-    "🛢️ Commodities: ICT Flow": "crude oil brent wti order flow institutional",
-    "🌍 Geopolítica & Macro": "geopolitics global conflict trade wars",
-    "🏦 Política Monetária (Interest Rates)": "central banks FED inflation interest rates",
-    "🕒 Killzones & High Impact": "economic calendar NFP FOMC news volatility"
-}
+        completion = client.chat.completions.create(
+            model=modelo,
+            messages=messages,
+            temperature=0.3,
+            max_tokens=1000
+        )
+        return completion.choices[0].message.content
+    except Exception as e:
+        return f"❌ Erro: {str(e)}"
 
-# Menu de seleção com seus nomes exatos
-fluxo_selecionado = st.selectbox("Selecione o Fluxo de Análise:", list(temas_originais.keys()))
+# --- BARRA LATERAL (FLUXOS RESTAURADOS) ---
+with st.sidebar:
+    st.header("⚙️ Painel ICT & Macro")
+    st.info("Acesso Institucional Liberado ✅") # Informativo para o usuário
 
-# Área de texto para o usuário
-user_input = st.text_area("Digite sua análise ou dúvida aqui:", height=150)
+    st.divider()
 
-if st.button("Executar Análise"):
-    if user_input:
-        with st.spinner("Consultando algoritmos ICT..."):
-            try:
-                # O terminal usa o contexto técnico de cada tema selecionado
-                contexto_tecnico = temas_originais[fluxo_selecionado]
-                
-                chat_completion = client.chat.completions.create(
-                    messages=[
-                        {"role": "system", "content": f"Você é um especialista em ICT. Contexto atual: {contexto_tecnico}"},
-                        {"role": "user", "content": user_input}
-                    ],
-                    model="llama3-8b-8192",
-                )
-                
-                st.markdown(f"### 📝 Resultado para {fluxo_selecionado}:")
-                st.write(chat_completion.choices[0].message.content)
-            except Exception as e:
-                st.error(f"Erro no processamento: {e}")
+    temas_full = {
+        "📊 COT & Institutional Bias": "COT report institutional net positions Smart Money",
+        "💱 Forex: ICT Majors": "DXY EURUSD USDJPY algorithmic price action",
+        "📀 Metais & Liquidez": "gold silver liquidity pools silver bullet",
+        "📈 Índices: S&P500 / Nasdaq (ICT)": "S&P500 Nasdaq ES NQ price action liquidity",
+        "🛢️ Commodities: ICT Flow": "crude oil brent wti order flow institutional",
+        "🌍 Geopolítica & Macro": "geopolitics global conflict trade wars",
+        "🏦 Política Monetária (Interest Rates)": "central banks FED inflation interest rates",
+        "🕒 Killzones & High Impact": "economic calendar NFP FOMC news volatility"
+    }
+
+    escolha = st.selectbox("Selecione o Fluxo:", list(temas_full.keys()))
+    periodo = st.selectbox("Janela de Tempo:", ["12h", "24h", "48h", "7d"], index=1)
+
+    if st.button("🌐 Sincronizar Sinais ICT"):
+        with st.spinner("Mapeando liquidez algorítmica..."):
+            gn = GNews(language='en', country='US', period=periodo, max_results=10)
+            news = gn.get_news(temas_full[escolha])
+            if news:
+                bruto = ""
+                for n in news:
+                    bruto += f"FONTE: {n['publisher']['title']} | INFO: {n['title']}\n---\n"
+                st.session_state['dados_terminal'] = bruto
+                st.rerun()
+            else:
+                st.error("Nenhum sinal encontrado.")
+
+# --- PAINEL PRINCIPAL ---
+st.title("🏛️ Terminal ICT: Institutional Order Flow")
+st.markdown(f"### Estratégia ICT em: **{escolha}**")
+
+dados_atuais = st.session_state.get('dados_terminal', '')
+noticias_campo = st.text_area("Fluxo de Dados Atual:", value=dados_atuais, height=150)
+
+if st.button("🚀 Executar Análise Institucional"):
+    if noticias_campo:
+        with st.spinner("Identificando Order Blocks e FVG..."):
+            col1, col2, col3 = st.columns(3)
+
+            # Chamadas usando a chave automática
+            res_smart = chamar_ia_groq('Especialista em ICT (Institutional Order Flow)', noticias_campo)
+            res_retail = chamar_ia_groq('Analista de Indução e Liquidez de Varejo', noticias_campo)
+            res_macro = chamar_ia_groq('Estrategista Macro & ICT Bias', noticias_campo)
+
+            with col1: st.info(f"🐋 **Institutional Flow (ICT)**\n\n{res_smart}")
+            with col2: st.error(f"🐟 **Retail Trap (Liquidez de Sardinha)**\n\n{res_retail}")
+            with col3: st.success(f"🦅 **Daily Bias (Direcionamento)**\n\n{res_macro}")
+
+            st.divider()
+            st.subheader("🎯 Matriz de Execução ICT")
+
+            contexto_plano = f"Flow: {res_smart}\nTrap: {res_retail}\nBias: {res_macro}"
+            prompt_plano = (
+                "Com base na análise ICT:\n"
+                "1. DAILY BIAS: (Alta ou Baixa e por quê).\n"
+                "2. ZONAS DE LIQUIDEZ: (Onde as sardinhas deixaram Stops que serão capturados).\n"
+                "3. PONTO DE INTERESSE (POI): (Order Blocks ou FVG importantes para entrada).\n"
+                "4. GATILHO: (Aguardar MSS ou Judas Swing)."
+            )
+
+            veredito = chamar_ia_groq("Gestor ICT Senior", f"{prompt_plano}\n\nCONTEXTO: {contexto_plano}")
+            st.markdown(f"> **PLANO DE EXECUÇÃO INSTITUCIONAL:**\n\n{veredito}")
     else:
-        st.warning("Por favor, insira dados para análise.")
-
-st.markdown("---")
-st.caption("Terminal Online - Acesso Liberado via Smart Money Secrets")
+        st.error("⚠️ Sincronize os dados primeiro no botão azul à esquerda.")
