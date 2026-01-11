@@ -6,17 +6,15 @@ import os
 # --- CONFIGURAÇÃO DA INTERFACE ---
 st.set_page_config(page_title="Terminal ICT: Institutional Order Flow", layout="wide", page_icon="🏛️")
 
-# --- FUNÇÃO DE INTELIGÊNCIA (DETECTOR DE AMBIENTE) ---
+# --- FUNÇÃO DE INTELIGÊNCIA ---
 def chamar_ia_groq(perfil, texto):
     try:
-        # Primeiro tenta ler do Streamlit Secrets (Nuvem ou local .streamlit/secrets.toml)
         if "GROQ_API_KEY" in st.secrets:
             key = st.secrets["GROQ_API_KEY"]
-        # Segundo tenta ler das variáveis de ambiente do sistema
         elif os.environ.get("GROQ_API_KEY"):
             key = os.environ.get("GROQ_API_KEY")
         else:
-            return "⚠️ Erro: Chave API não encontrada. Configure nos Secrets do Streamlit."
+            return "⚠️ Erro: Chave API não encontrada."
             
         client = Groq(api_key=key)
         modelo = "llama-3.1-8b-instant"
@@ -24,8 +22,7 @@ def chamar_ia_groq(perfil, texto):
         messages = [
             {"role": "system", "content": f"""Você é um {perfil}. 
             Utilize estritamente a metodologia ICT (Inner Circle Trader). 
-            Foque em: Liquidez (B-side/S-side), Fair Value Gaps (FVG), Order Blocks, 
-            Judas Swing, Market Structure Shift e Killzones. 
+            Foque em: Liquidez (B-side/S-side), Fair Value Gaps (FVG), Order Blocks e Market Structure. 
             Responda em PORTUGUÊS técnico e direto."""},
             {"role": "user", "content": f"DADOS DE MERCADO:\n\n{texto[:3500]}"}
         ]
@@ -40,7 +37,7 @@ def chamar_ia_groq(perfil, texto):
     except Exception as e:
         return f"❌ Erro na IA: {str(e)}"
 
-# --- BARRA LATERAL (PAINEL DE CONTROLE) ---
+# --- BARRA LATERAL ---
 with st.sidebar:
     st.header("⚙️ Painel ICT & Macro")
     st.info("Acesso Institucional Liberado ✅")
@@ -79,30 +76,21 @@ with st.sidebar:
                     st.success(f"✅ {len(news)} Sinais capturados!")
                     st.rerun()
                 else:
-                    st.warning("Nenhum sinal encontrado. Tente a janela de '30d'.")
+                    st.warning("Nenhum sinal encontrado.")
             except Exception as e:
                 st.error(f"Erro na sincronização: {e}")
 
-# --- MENSAGEM DE BOAS-VINDAS E INSTRUÇÕES ---
+# --- MENSAGEM DE BOAS-VINDAS ---
 st.title("🏛️ Terminal ICT: Institutional Order Flow")
 st.markdown(f"""
 ### Bem-vindo ao seu hub de Inteligência Algorítmica.
 **Status:** Sistema Operacional | **Modelo:** Llama 3.1 Neural  
-Este terminal analisa o mercado sob a ótica do **Smart Money Concepts (SMC/ICT)**, filtrando ruídos do varejo.
+Análise de mercado sob a ótica do **Smart Money Concepts (SMC/ICT)**.
 """)
-
-# O st.expander organiza as instruções de forma elegante
-with st.expander("📖 Guia de Operação do Terminal"):
-    st.write("""
-    1. **Sincronização:** No menu lateral, selecione o ativo e o período. Clique em **Sincronizar Sinais**.
-    2. **Fluxo de Dados:** As notícias institucionais aparecerão na caixa de texto central.
-    3. **Análise:** Clique em **Executar Análise Institucional** para processar o viés do mercado.
-    4. **Execução:** O sistema gerará um plano com Bias, Liquidez e POI (Ponto de Interesse).
-    """)
 
 st.divider()
 
-# --- PAINEL PRINCIPAL (ANÁLISE) ---
+# --- PAINEL PRINCIPAL ---
 st.markdown(f"### 🎯 Análise Atual: **{escolha}**")
 
 dados_atuais = st.session_state.get('dados_terminal', '')
@@ -113,17 +101,13 @@ if st.button("🚀 Executar Análise Institucional"):
         with st.spinner("Mapeando liquidez institucional..."):
             col1, col2, col3 = st.columns(3)
             
-            # Análises em paralelo
             res_smart = chamar_ia_groq('Especialista em ICT (Institutional Order Flow)', noticias_campo)
             res_retail = chamar_ia_groq('Analista de Indução e Liquidez de Varejo', noticias_campo)
             res_macro = chamar_ia_groq('Estrategista Macro e Daily Bias', noticias_campo)
 
-            with col1: 
-                st.info(f"🐋 **Institutional Flow**\n\n{res_smart}")
-            with col2: 
-                st.error(f"🐟 **Retail Trap**\n\n{res_retail}")
-            with col3: 
-                st.success(f"🦅 **Daily Bias**\n\n{res_macro}")
+            with col1: st.info(f"🐋 **Institutional Flow**\n\n{res_smart}")
+            with col2: st.error(f"🐟 **Retail Trap**\n\n{res_retail}")
+            with col3: st.success(f"🦅 **Daily Bias**\n\n{res_macro}")
 
             st.divider()
             st.subheader("🎯 Matriz de Execução Estratégica")
@@ -132,7 +116,7 @@ if st.button("🚀 Executar Análise Institucional"):
             veredito = chamar_ia_groq("Gestor ICT Senior", f"Gere um plano de trade curto com Bias, Liquidez e gatilho de entrada baseado nisso: {ctx}")
             st.markdown(f"> **PLANO FINAL DE EXECUÇÃO:**\n\n{veredito}")
     else:
-        st.error("⚠️ Erro: Sincronize os dados primeiro para análise.")
+        st.error("⚠️ Sincronize os dados primeiro.")
 
 st.markdown("---")
-st.caption("Terminal Macro ICT - V1.5 Final | Desenvolvido para Traders Institucionais")
+st.caption("Terminal Macro ICT - V1.6 | Inteligência Institucional")
