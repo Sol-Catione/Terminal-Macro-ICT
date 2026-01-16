@@ -1,3 +1,4 @@
+# Versao Estavel 1.7
 streamlit
 groq
 gnews
