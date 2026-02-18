@@ -1,282 +1,181 @@
 from __future__ import annotations
 
-import os
-from typing import Any
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import streamlit as st
 
-import xau_asia_db
-from llm_deepseek import deepseek_chat_completion
-from groq import Groq
-from xau_asia_ingest import read_asia_open_daily_csv
-from xau_asia_oanda_build import build_xau_asia_open_daily_from_oanda
-from xau_entry_heuristics import build_entry_plan
-from oanda_candles import test_oanda_market_data_access
-
-
-def _get_secret(name: str) -> str | None:
-    try:
-        if name in st.secrets:
-            val = st.secrets[name]
-            if isinstance(val, str) and val.strip():
-                return val.strip()
-    except Exception:
-        pass
-    val = os.environ.get(name)
-    return val.strip() if isinstance(val, str) and val.strip() else None
+import trade_journal_db
+from trade_pattern_analysis import extract_features, nearest_neighbors, summarize
 
 
 def render_private_xau_asia_entry_agent() -> None:
     st.header("Gestao Privada")
-    st.caption("Conteudo informativo/educacional. Nao e recomendacao de investimento.")
+    st.caption("Objetivo: registrar entradas reais (prints) e extrair o operacional que se repete na Kill Zone Asia (23:00-03:00 PT).")
 
-    conn = xau_asia_db.connect()
-    stats = xau_asia_db.get_stats(conn)
+    conn = trade_journal_db.connect()
+    st.metric("Trades cadastrados", trade_journal_db.count(conn))
 
-    col_a, col_b, col_c = st.columns(3)
-    with col_a:
-        st.metric("Registros (Asia open)", stats.rows)
-    with col_b:
-        st.metric("Min date", stats.min_date or "-")
-    with col_c:
-        st.metric("Max date", stats.max_date or "-")
+    tab_add, tab_matrix, tab_list = st.tabs(["Cadastrar", "Matriz", "Registros"])
 
-    st.divider()
-    st.subheader("Base de dados (ultimos 3 anos)")
-    st.write(
-        "Opcao 1 (recomendado): baixar automaticamente do OANDA (XAU_USD) e gerar o snapshot das 02:00 Portugal "
-        "com ATR14 por dia. Opcao 2: importar CSV."
-    )
+    with tab_add:
+        st.subheader("Cadastrar Trade (Manual + Print)")
+        st.write("Preencha os dados do trade e anexe o print. O sistema usa ATR e numeração psicológica para achar repetição.")
 
-    with st.expander("OANDA: baixar e gerar base (02:00 Portugal)", expanded=True):
-        oanda_key = _get_secret("OANDA_API_KEY")
-        oanda_env = _get_secret("OANDA_ENV") or "practice"
-        years = st.number_input("Anos de historico", min_value=1, max_value=10, value=3, step=1)
-        granularity = st.selectbox("Granularity", options=["M5", "M1"], index=0)
-        tz_name = "Europe/Lisbon"
+        with st.form("trade_add_form", clear_on_submit=False):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                trade_id = st.text_input("Trade ID (unico)", placeholder="ex: 2026-02-18_0115_PT_LONG")
+                symbol = st.text_input("Symbol", value="XAUUSD")
+                direction = st.selectbox("Direcao", options=["LONG", "SHORT"])
+            with col2:
+                timeframe_min = st.number_input("Timeframe (min)", min_value=1, max_value=240, value=15, step=1)
+                dt_date = st.date_input("Data (Portugal)", value=None)
+                dt_time = st.time_input("Hora (Portugal)", value=None)
+            with col3:
+                entry = st.number_input("Entry", min_value=0.0, value=0.0, step=0.01)
+                sl = st.number_input("SL", min_value=0.0, value=0.0, step=0.01)
+                tp = st.number_input("TP", min_value=0.0, value=0.0, step=0.01)
 
-        time_basis = st.radio(
-            "Base de tempo para a abertura",
-            options=["UTC (recomendado, sem DST)", "Portugal (Europe/Lisbon, pode variar em UTC)"],
-            index=0,
-            horizontal=True,
+            st.write("Numeração psicológica (opcional, recomendado)")
+            col_ps1, col_ps2, col_ps3 = st.columns(3)
+            with col_ps1:
+                psych_step = st.number_input("Step psicológico (USD)", min_value=0.0, value=10.0, step=1.0)
+                level_type = st.selectbox("Tipo do nível", options=["", "SUPORTE", "RESISTENCIA"], index=0)
+            with col_ps2:
+                psych_level = st.number_input("Nível testado (ex: 5000)", min_value=0.0, value=0.0, step=1.0)
+                touched_level = st.checkbox("Tocou o nível", value=False)
+            with col_ps3:
+                rejection = st.checkbox("Rejeição (pavio/fechamento)", value=False)
+                confirmation = st.checkbox("Confirmação no candle seguinte", value=False)
+
+            col4, col5 = st.columns(2)
+            with col4:
+                atr14 = st.number_input("ATR(14) no candle de entrada", min_value=0.0, value=0.0, step=0.01)
+            with col5:
+                result_r = st.number_input("Resultado (em R)", value=0.0, step=0.01, help="Ex: +1.00, -1.00, +0.92")
+
+            image = st.file_uploader("Anexar print (opcional)", type=["png", "jpg", "jpeg", "webp"])
+            notes = st.text_area("Notas", placeholder="Ex: contexto, confluencias, etc.")
+
+            submitted = st.form_submit_button("Salvar trade")
+
+        if image is not None:
+            st.image(image, caption=image.name, width=260)
+
+        if submitted:
+            if not trade_id.strip():
+                st.error("Trade ID e obrigatorio.")
+            elif dt_date is None or dt_time is None:
+                st.error("Data e hora (Portugal) sao obrigatorias.")
+            elif entry <= 0 or sl <= 0 or tp <= 0:
+                st.error("Entry/SL/TP precisam ser > 0.")
+            else:
+                tz = ZoneInfo("Europe/Lisbon")
+                dt_local = datetime.combine(dt_date, dt_time).replace(tzinfo=tz)
+                dt_utc = dt_local.astimezone(ZoneInfo("UTC"))
+
+                row = {
+                    "trade_id": trade_id.strip(),
+                    "symbol": symbol.strip() or "XAUUSD",
+                    "timeframe_min": int(timeframe_min),
+                    "dt_lisbon": dt_local.isoformat(),
+                    "dt_utc": dt_utc.isoformat().replace("+00:00", "Z"),
+                    "direction": direction,
+                    "psych_step": float(psych_step) if psych_step and psych_step > 0 else None,
+                    "psych_level": float(psych_level) if psych_level and psych_level > 0 else None,
+                    "level_type": level_type if level_type else None,
+                    "touched_level": 1 if touched_level else 0,
+                    "rejection": 1 if rejection else 0,
+                    "confirmation": 1 if confirmation else 0,
+                    "entry": float(entry),
+                    "sl": float(sl),
+                    "tp": float(tp),
+                    "atr14": float(atr14) if atr14 and atr14 > 0 else None,
+                    "result_r": float(result_r),
+                    "notes": notes.strip() if notes.strip() else None,
+                    "image_name": image.name if image is not None else None,
+                    "image_mime": image.type if image is not None else None,
+                    "image_blob": image.getvalue() if image is not None else None,
+                }
+                trade_journal_db.upsert_trade_samples(conn, [row])
+                st.success("Trade salvo.")
+
+    with tab_matrix:
+        st.subheader("Agente: Matriz de Comparacao de Entradas")
+        st.write(
+            "A matriz compara trades por assinatura (hora, timeframe, direcao) e por volatilidade (ATR), "
+            "alem de numeração psicológica quando preenchida."
         )
-        if time_basis.startswith("UTC"):
-            anchor_mode = "utc"
-            anchor_h = st.number_input("Horario (UTC) - hora", min_value=0, max_value=23, value=0, step=1)
-            anchor_m = st.number_input("Horario (UTC) - minuto", min_value=0, max_value=59, value=0, step=1)
-            st.caption("Recomendado para comparacao de padroes: sempre o mesmo timestamp em UTC (sem saltos de 1h).")
+
+        trades = trade_journal_db.fetch_all(conn)
+        if not trades:
+            st.info("Cadastre trades na aba `Cadastrar` para habilitar a matriz.")
         else:
-            anchor_mode = "local"
-            anchor_h, anchor_m = 2, 0
-            st.caption("Abertura fixada em 02:00 Portugal (Europe/Lisbon). Em horario de verao isso muda em UTC.")
+            colf1, colf2 = st.columns(2)
+            with colf1:
+                only_asia = st.toggle("Filtrar Kill Zone Asia (23:00-03:00 PT)", value=True)
+            with colf2:
+                default_step = st.number_input("Step default (USD)", min_value=0.0, value=10.0, step=1.0)
 
-        if not oanda_key:
-            st.info("Configure `OANDA_API_KEY` e `OANDA_ENV` (practice/live) no secrets/env para habilitar o download.")
+            feats = extract_features(trades, default_round_step=float(default_step))
+            if only_asia:
+                feats = [f for f in feats if (f.hour >= 23 or f.hour <= 3)]
+
+            st.write(summarize(feats))
+
+            ids = [f.trade_id for f in feats]
+            if not ids:
+                st.info("Nenhum trade ficou dentro do filtro atual.")
+            else:
+                colm1, colm2 = st.columns(2)
+                with colm1:
+                    target_id = st.selectbox("Trade alvo", options=ids, index=max(0, len(ids) - 1))
+                with colm2:
+                    k = st.number_input("Top K similares", min_value=1, max_value=25, value=8, step=1)
+
+                nn = nearest_neighbors(feats, target_id=target_id, k=int(k))
+
+                blob, _, name = trade_journal_db.fetch_image(conn, target_id)
+                if blob:
+                    st.image(blob, caption=name or target_id, width=260)
+                    with st.expander("Ver print em tamanho grande", expanded=False):
+                        st.image(blob, caption=name or target_id, use_container_width=True)
+
+                if nn:
+                    st.write("Mais parecidos (distancia menor = mais parecido):")
+                    st.table([{"trade_id": tid, "distance": round(d, 4)} for tid, d in nn])
+                else:
+                    st.info("Nao foi possivel achar vizinhos para o trade alvo.")
+
+    with tab_list:
+        st.subheader("Registros (Tabela)")
+        trades = trade_journal_db.fetch_all(conn)
+        if not trades:
+            st.info("Nenhum trade cadastrado ainda.")
         else:
-            col_t1, col_t2 = st.columns(2)
-            with col_t1:
-                test_clicked = st.button("Testar token OANDA")
-            with col_t2:
-                download_clicked = st.button("Baixar e atualizar base (OANDA:XAUUSD)")
-
-            if test_clicked:
-                with st.spinner("Testando acesso OANDA..."):
-                    try:
-                        msg = test_oanda_market_data_access(
-                            api_key=oanda_key,
-                            env=oanda_env,
-                            instrument="XAU_USD",
-                        )
-                        if msg.startswith("OK"):
-                            st.success(msg)
-                        else:
-                            st.warning(msg)
-                    except Exception as e:
-                        st.error(f"Falha ao testar token: {e}")
-
-            if download_clicked:
-                progress = st.progress(0, text="Inicializando...")
-
-                def _cb(info: dict[str, Any]) -> None:
-                    stage = info.get("stage")
-                    if stage == "download":
-                        # Not an exact %, but helps show liveness.
-                        progress.progress(10, text=f"Baixando candles... ({info.get('candles')} lidos)")
-                    elif stage == "build":
-                        total = int(info.get("total_days") or 1)
-                        done = int(info.get("days") or 0)
-                        pct = 10 + int(80 * min(done / total, 1.0))
-                        progress.progress(pct, text=f"Gerando dias (02:00 PT)... {done}/{total}")
-
-                with st.spinner("Baixando candles do OANDA e calculando ATR..."):
-                    try:
-                        result = build_xau_asia_open_daily_from_oanda(
-                            api_key=oanda_key,
-                            env=oanda_env,
-                            years=int(years),
-                            instrument="XAU_USD",
-                            granularity=str(granularity),
-                            anchor_mode=anchor_mode,
-                            anchor_time=(int(anchor_h), int(anchor_m)),
-                            tz_name=tz_name,
-                            progress_cb=_cb,
-                        )
-                        if not result.rows:
-                            st.error("Nenhum dia gerado.")
-                        else:
-                            n = xau_asia_db.upsert_asia_open_daily(conn, result.rows)
-                            progress.progress(100, text=f"Concluido. Dias importados/atualizados: {n}")
-                            st.success(f"Concluido. Dias importados/atualizados: {n}")
-                        for n in result.notes:
-                            st.info(n)
-                    except Exception as e:
-                        st.error(f"OANDA: falha ao baixar/gerar base: {e}")
-                stats = xau_asia_db.get_stats(conn)
-
-    st.divider()
-    st.subheader("Importar CSV (manual)")
-    st.write("CSV minimo: `date` e `open` (opcional: `h1_high`, `h1_low`, `h1_close`, `atr14`).")
-    uploaded = st.file_uploader("CSV (asia open daily)", type=["csv"])
-    if uploaded is not None and st.button("Importar CSV"):
-        rows, notes = read_asia_open_daily_csv(uploaded.getvalue(), source=uploaded.name)
-        if not rows:
-            st.error("Nenhuma linha valida para importar.")
-        else:
-            n = xau_asia_db.upsert_asia_open_daily(conn, rows)
-            st.success(f"Importados/atualizados {n} dias.")
-        for n in notes:
-            st.info(n)
-
-        # Refresh stats after import.
-        stats = xau_asia_db.get_stats(conn)
-
-    st.divider()
-    st.subheader("Agente de entradas: XAU/USD (Abertura Asia)")
-
-    with st.expander("Parametros", expanded=True):
-        reference_price = st.number_input("Preco de referencia (XAU/USD)", min_value=0.0, value=2000.0, step=0.1)
-        round_step = st.number_input("Numero redondo (step)", min_value=0.0, value=10.0, step=1.0)
-        round_proximity = st.number_input("Proximidade do round (USD)", min_value=0.0, value=1.5, step=0.1)
-        min_rr = st.number_input("RR minimo", min_value=1.0, value=1.0, step=0.1)
-
-        st.write("Tesouraria (position sizing)")
-        account_balance = st.number_input("Saldo (USD)", min_value=0.0, value=10000.0, step=100.0)
-        risk_percent = st.number_input("Risco por trade (%)", min_value=0.0, max_value=10.0, value=1.0, step=0.1)
-        contract_size = st.number_input("Contract size (oz por lote)", min_value=1.0, value=100.0, step=1.0)
-
-    history = xau_asia_db.fetch_last(conn, limit=1300)
-
-    plan = build_entry_plan(
-        history=history,
-        reference_price=float(reference_price),
-        round_step=float(round_step),
-        round_proximity=float(round_proximity),
-        min_rr=float(min_rr),
-        account_balance=float(account_balance) if account_balance else None,
-        risk_percent=float(risk_percent) if risk_percent else None,
-        contract_size=float(contract_size),
-    )
-
-    st.markdown("**Sugestao (heuristica)**")
-    out_col1, out_col2, out_col3, out_col4 = st.columns(4)
-    out_col1.metric("Direcao", plan.direction)
-    out_col2.metric("Entry", f"{plan.entry:.2f}")
-    out_col3.metric("Stop", f"{plan.stop:.2f}")
-    out_col4.metric("TP", f"{plan.take_profit:.2f}")
-
-    st.write(f"RR efetivo: `{plan.rr:.2f}` | Stop distance: `{plan.stop_distance:.2f}`")
-    if plan.lots is not None and plan.risk_amount is not None:
-        st.write(f"Size (lotes): `{plan.lots:.4f}` | Risco (USD): `{plan.risk_amount:.2f}`")
-
-    for n in plan.notes:
-        st.caption(f"- {n}")
-
-    st.divider()
-    st.subheader("DeepSeek (opcional)")
-    engine = st.radio(
-        "Motor LLM",
-        options=["DeepSeek (requer saldo)", "Groq (fallback)"],
-        index=0,
-        horizontal=True,
-    )
-
-    use_llm = st.toggle("Validar/refinar a entrada com LLM", value=False)
-    if not use_llm:
-        return
-
-    system_prompt = (
-        "Voce e um agente de entradas para XAUUSD focado na abertura da Asia. "
-        "Responda de forma tecnica e direta. "
-        "Nao de recomendacao financeira; apenas descreva um setup hipotetico e seus criterios."
-    )
-    user_prompt = (
-        "Com base nas estatisticas e restricoes abaixo, proponha um setup (entry/stop/tp) "
-        "com RR >= 1:1 e preferencia por numeros redondos.\n\n"
-        f"Preco referencia: {reference_price}\n"
-        f"Round step: {round_step}\n"
-        f"Round proximity: {round_proximity}\n"
-        f"Min RR: {min_rr}\n\n"
-        f"Heuristica atual:\n"
-        f"- Direcao: {plan.direction}\n"
-        f"- Entry: {plan.entry:.2f}\n"
-        f"- Stop: {plan.stop:.2f}\n"
-        f"- TP: {plan.take_profit:.2f}\n"
-        f"- RR: {plan.rr:.2f}\n\n"
-        f"Stats:\n{plan.stats}\n\n"
-        "Regras:\n"
-        "- Se sugerir diferente, explique por que.\n"
-        "- Use no maximo 8 linhas.\n"
-    )
-
-    if engine.startswith("DeepSeek"):
-        api_key = _get_secret("DEEPSEEK_API_KEY")
-        base_url = _get_secret("DEEPSEEK_BASE_URL") or "https://api.deepseek.com/v1/chat/completions"
-        model = _get_secret("DEEPSEEK_MODEL") or "deepseek-chat"
-
-        if not api_key:
-            st.error("Falta `DEEPSEEK_API_KEY` no secrets/env.")
-            return
-
-        with st.spinner("Consultando DeepSeek..."):
-            try:
-                resp = deepseek_chat_completion(
-                    api_key=api_key,
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    model=model,
-                    base_url=base_url,
-                    timeout_s=20,
-                    temperature=0.2,
-                    max_tokens=700,
+            rows = []
+            for t in trades:
+                rows.append(
+                    {
+                        "trade_id": t.trade_id,
+                        "dt_lisbon": t.dt_lisbon,
+                        "symbol": t.symbol,
+                        "tf_min": t.timeframe_min,
+                        "dir": t.direction,
+                        "entry": t.entry,
+                        "sl": t.sl,
+                        "tp": t.tp,
+                        "atr14": t.atr14,
+                        "result_r": t.result_r,
+                        "psych_step": t.psych_step,
+                        "psych_level": t.psych_level,
+                        "level_type": t.level_type,
+                        "touched": t.touched_level,
+                        "rejection": t.rejection,
+                        "confirm": t.confirmation,
+                        "has_img": t.has_image,
+                    }
                 )
-                st.text(resp)
-            except Exception as e:
-                st.error(f"Falha ao chamar DeepSeek: {e}")
-                st.info("Se quiser seguir sem pagar DeepSeek, mude o motor para `Groq (fallback)` acima.")
-    else:
-        groq_key = _get_secret("GROQ_API_KEY")
-        if not groq_key:
-            st.error("Falta `GROQ_API_KEY` no secrets/env.")
-            return
+            st.dataframe(rows, use_container_width=True, hide_index=True)
 
-        with st.spinner("Consultando Groq..."):
-            try:
-                client = Groq(api_key=groq_key)
-                completion = client.chat.completions.create(
-                    model="llama-3.1-8b-instant",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    temperature=0.2,
-                    max_tokens=700,
-                    timeout=20,
-                )
-                choices = completion.choices or []
-                if not choices:
-                    st.error("Groq: resposta vazia.")
-                    return
-                st.text(choices[0].message.content)
-            except Exception as e:
-                st.error(f"Falha ao chamar Groq: {e}")
