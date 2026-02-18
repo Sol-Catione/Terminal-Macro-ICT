@@ -1,0 +1,11 @@
+# Ignorar configurações locais do Streamlit (onde fica sua chave)
+.streamlit/
+
+# Ignorar pastas de ambiente virtual (opcional, mas recomendado)
+venv/
+.venv/
+__pycache__/
+data/
+*.sqlite3
+REDME
+.idea/workspace.xml
