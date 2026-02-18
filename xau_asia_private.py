@@ -7,6 +7,7 @@ import streamlit as st
 
 import trade_journal_db
 from trade_pattern_analysis import extract_features, nearest_neighbors, summarize
+from operacional_xauusd import ConfiguracaoOperacional, OperacionalKillZone
 
 
 def _parse_dt_lisbon_iso(s: str) -> datetime:
@@ -29,7 +30,7 @@ def render_private_xau_asia_entry_agent() -> None:
     conn = trade_journal_db.connect()
     st.metric("Trades cadastrados", trade_journal_db.count(conn))
 
-    tab_add, tab_matrix, tab_list = st.tabs(["Cadastrar", "Matriz", "Registros"])
+    tab_add, tab_matrix, tab_oper, tab_list = st.tabs(["Cadastrar", "Matriz", "Operacional", "Registros"])
 
     with tab_add:
         st.subheader("Cadastrar Trade (Manual + Print)")
@@ -160,6 +161,56 @@ def render_private_xau_asia_entry_agent() -> None:
                     st.table([{"trade_id": tid, "distance": round(d, 4)} for tid, d in nn])
                 else:
                     st.info("Nao foi possivel achar vizinhos para o trade alvo.")
+
+    with tab_oper:
+        st.subheader("Agente: Operacional Kill Zone (Motor de Regras)")
+        st.caption("Funciona com inputs manuais (preco + candle OHLC + contexto). Nao e recomendacao financeira.")
+
+        cfg = ConfiguracaoOperacional()
+        op = OperacionalKillZone(cfg)
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            now_time = st.time_input("Hora atual (Portugal)", value=datetime.now(ZoneInfo("Europe/Lisbon")).time().replace(microsecond=0))
+            preco_atual = st.number_input("Preco atual", min_value=0.0, value=0.0, step=0.01)
+            permitted, janela_label, janela_dir = op.janela_atual(now_time)
+            st.caption(f"Janela: {janela_label or '-'} | Direcao esperada: {janela_dir or '-'}")
+            direcao_esperada = st.selectbox("Direcao esperada (override)", options=["(auto)", "AMBAS", "COMPRA", "VENDA"], index=0)
+        with col2:
+            st.write("Candle atual (OHLC)")
+            o = st.number_input("Open", min_value=0.0, value=0.0, step=0.01)
+            h = st.number_input("High", min_value=0.0, value=0.0, step=0.01)
+            l = st.number_input("Low", min_value=0.0, value=0.0, step=0.01)
+            c = st.number_input("Close", min_value=0.0, value=0.0, step=0.01)
+        with col3:
+            st.write("Contexto (estrutura)")
+            minima_recente = st.number_input("Minima recente", min_value=0.0, value=0.0, step=0.01)
+            maxima_recente = st.number_input("Maxima recente", min_value=0.0, value=0.0, step=0.01)
+            step_dia = st.number_input("Step do dia (opcional)", min_value=0.0, value=0.0, step=1.0, help="0 = auto (10/20/50).")
+
+        if st.button("Gerar sinal"):
+            candle = {"open": float(o), "high": float(h), "low": float(l), "close": float(c)}
+            contexto = {"minima_recente": float(minima_recente) if minima_recente > 0 else None,
+                        "maxima_recente": float(maxima_recente) if maxima_recente > 0 else None}
+            # Remove Nones to keep calculations clean
+            contexto = {k: v for k, v in contexto.items() if v is not None}
+
+            override = None if direcao_esperada == "(auto)" else direcao_esperada
+            sig = op.analisar_oportunidade(
+                float(preco_atual),
+                candle,
+                contexto,
+                agora=now_time,
+                direcao_esperada=override,
+                step_dia=float(step_dia) if step_dia and step_dia > 0 else None,
+            )
+            if not sig:
+                st.warning("Nenhum sinal pelo motor de regras (ou fora da Kill Zone).")
+            else:
+                st.success(
+                    f"SINAL: {sig.direcao.value} | entry {sig.entrada:.2f} | stop {sig.stop:.2f} | risco {sig.risco_pontos:.2f} | janela {sig.janela}"
+                )
+                st.write({"nivel_testado": sig.nivel_testado, "forca_rejeicao": sig.forca_rejeicao, "alvos": sig.alvos})
 
     with tab_list:
         st.subheader("Registros (Tabela)")
