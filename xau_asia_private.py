@@ -17,6 +17,11 @@ def _parse_dt_lisbon_iso(s: str) -> datetime:
     return datetime.fromisoformat(v).astimezone(ZoneInfo("Europe/Lisbon"))
 
 
+@st.dialog("Print")
+def _show_print_dialog(blob: bytes, caption: str) -> None:
+    st.image(blob, caption=caption, use_container_width=True)
+
+
 def render_private_xau_asia_entry_agent() -> None:
     st.header("Gestao Privada")
     st.caption("Objetivo: registrar entradas reais (prints) e extrair o operacional que se repete na Kill Zone Asia (23:00-03:00 PT).")
@@ -147,8 +152,8 @@ def render_private_xau_asia_entry_agent() -> None:
                 blob, _, name = trade_journal_db.fetch_image(conn, target_id)
                 if blob:
                     st.image(blob, caption=name or target_id, width=260)
-                    with st.expander("Ver print em tamanho grande", expanded=False):
-                        st.image(blob, caption=name or target_id, use_container_width=True)
+                    if st.button("Abrir print", key=f"open_print_matrix_{target_id}"):
+                        _show_print_dialog(blob, name or target_id)
 
                 if nn:
                     st.write("Mais parecidos (distancia menor = mais parecido):")
@@ -201,8 +206,8 @@ def render_private_xau_asia_entry_agent() -> None:
             blob, _, name = trade_journal_db.fetch_image(conn, edit_id)
             if blob:
                 st.image(blob, caption=name or edit_id, width=260)
-                with st.expander("Ver print em tamanho grande", expanded=False):
-                    st.image(blob, caption=name or edit_id, use_container_width=True)
+                if st.button("Abrir print", key=f"open_print_edit_{edit_id}"):
+                    _show_print_dialog(blob, name or edit_id)
 
             dt_local = _parse_dt_lisbon_iso(current.dt_lisbon)
 
