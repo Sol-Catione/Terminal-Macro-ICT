@@ -9,6 +9,14 @@ import trade_journal_db
 from trade_pattern_analysis import extract_features, nearest_neighbors, summarize
 
 
+def _parse_dt_lisbon_iso(s: str) -> datetime:
+    # Stored as ISO with tz offset (Europe/Lisbon).
+    v = (s or "").strip()
+    if v.endswith("Z"):
+        v = v[:-1] + "+00:00"
+    return datetime.fromisoformat(v).astimezone(ZoneInfo("Europe/Lisbon"))
+
+
 def render_private_xau_asia_entry_agent() -> None:
     st.header("Gestao Privada")
     st.caption("Objetivo: registrar entradas reais (prints) e extrair o operacional que se repete na Kill Zone Asia (23:00-03:00 PT).")
@@ -179,3 +187,142 @@ def render_private_xau_asia_entry_agent() -> None:
                 )
             st.dataframe(rows, use_container_width=True, hide_index=True)
 
+            st.divider()
+            st.subheader("Editar Registro")
+            st.caption("Edicao sobrescreve os campos do trade selecionado. Para trocar/remover o print, use os botoes abaixo.")
+
+            trade_ids = [t.trade_id for t in trades]
+            edit_id = st.selectbox("Trade ID", options=trade_ids, index=len(trade_ids) - 1)
+            current = next((t for t in trades if t.trade_id == edit_id), None)
+            if current is None:
+                st.error("Trade nao encontrado.")
+                return
+
+            blob, _, name = trade_journal_db.fetch_image(conn, edit_id)
+            if blob:
+                st.image(blob, caption=name or edit_id, width=260)
+                with st.expander("Ver print em tamanho grande", expanded=False):
+                    st.image(blob, caption=name or edit_id, use_container_width=True)
+
+            dt_local = _parse_dt_lisbon_iso(current.dt_lisbon)
+
+            with st.form("trade_edit_form"):
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    symbol = st.text_input("Symbol", value=current.symbol)
+                    direction = st.selectbox(
+                        "Direcao",
+                        options=["LONG", "SHORT"],
+                        index=0 if current.direction.upper() == "LONG" else 1,
+                    )
+                    timeframe_min = st.number_input(
+                        "Timeframe (min)",
+                        min_value=1,
+                        max_value=240,
+                        value=int(current.timeframe_min),
+                        step=1,
+                    )
+                with col2:
+                    dt_date = st.date_input("Data (Portugal)", value=dt_local.date())
+                    dt_time = st.time_input("Hora (Portugal)", value=dt_local.time().replace(microsecond=0))
+                    atr14 = st.number_input(
+                        "ATR(14) no candle de entrada",
+                        min_value=0.0,
+                        value=float(current.atr14) if current.atr14 is not None else 0.0,
+                        step=0.01,
+                    )
+                with col3:
+                    entry = st.number_input("Entry", min_value=0.0, value=float(current.entry), step=0.01)
+                    sl = st.number_input("SL", min_value=0.0, value=float(current.sl), step=0.01)
+                    tp = st.number_input("TP", min_value=0.0, value=float(current.tp), step=0.01)
+
+                st.write("Numeração psicológica")
+                colp1, colp2, colp3 = st.columns(3)
+                with colp1:
+                    psych_step = st.number_input(
+                        "Step psicológico (USD)",
+                        min_value=0.0,
+                        value=float(current.psych_step) if current.psych_step is not None else 10.0,
+                        step=1.0,
+                    )
+                    level_type = st.selectbox(
+                        "Tipo do nível",
+                        options=["", "SUPORTE", "RESISTENCIA"],
+                        index=(
+                            1
+                            if (current.level_type or "").upper() == "SUPORTE"
+                            else 2
+                            if (current.level_type or "").upper() == "RESISTENCIA"
+                            else 0
+                        ),
+                    )
+                with colp2:
+                    psych_level = st.number_input(
+                        "Nível testado (ex: 5000)",
+                        min_value=0.0,
+                        value=float(current.psych_level) if current.psych_level is not None else 0.0,
+                        step=1.0,
+                    )
+                    touched_level = st.checkbox("Tocou o nível", value=bool(current.touched_level))
+                with colp3:
+                    rejection = st.checkbox("Rejeição", value=bool(current.rejection))
+                    confirmation = st.checkbox("Confirmação", value=bool(current.confirmation))
+
+                result_r = st.number_input(
+                    "Resultado (em R)",
+                    value=float(current.result_r) if current.result_r is not None else 0.0,
+                    step=0.01,
+                )
+                notes = st.text_area("Notas", value=current.notes or "")
+
+                replace_img = st.file_uploader(
+                    "Trocar print (opcional)",
+                    type=["png", "jpg", "jpeg", "webp"],
+                    key=f"replace_img_{edit_id}",
+                )
+                save = st.form_submit_button("Salvar alteracoes")
+
+            colb1, colb2 = st.columns(2)
+            with colb1:
+                if blob and st.button("Remover print"):
+                    trade_journal_db.update_image(conn, edit_id, image_blob=None, image_mime=None, image_name=None)
+                    st.success("Print removido.")
+            with colb2:
+                confirm_delete = st.checkbox("Confirmar exclusao", value=False)
+                if st.button("Apagar trade") and confirm_delete:
+                    trade_journal_db.delete_trade(conn, edit_id)
+                    st.success("Trade apagado.")
+
+            if save:
+                if entry <= 0 or sl <= 0 or tp <= 0:
+                    st.error("Entry/SL/TP precisam ser > 0.")
+                else:
+                    tz = ZoneInfo("Europe/Lisbon")
+                    dt_new_local = datetime.combine(dt_date, dt_time).replace(tzinfo=tz)
+                    dt_new_utc = dt_new_local.astimezone(ZoneInfo("UTC"))
+
+                    row = {
+                        "trade_id": edit_id,
+                        "symbol": symbol.strip() or "XAUUSD",
+                        "timeframe_min": int(timeframe_min),
+                        "dt_lisbon": dt_new_local.isoformat(),
+                        "dt_utc": dt_new_utc.isoformat().replace("+00:00", "Z"),
+                        "direction": direction,
+                        "psych_step": float(psych_step) if psych_step and psych_step > 0 else None,
+                        "psych_level": float(psych_level) if psych_level and psych_level > 0 else None,
+                        "level_type": level_type if level_type else None,
+                        "touched_level": 1 if touched_level else 0,
+                        "rejection": 1 if rejection else 0,
+                        "confirmation": 1 if confirmation else 0,
+                        "entry": float(entry),
+                        "sl": float(sl),
+                        "tp": float(tp),
+                        "atr14": float(atr14) if atr14 and atr14 > 0 else None,
+                        "result_r": float(result_r),
+                        "notes": notes.strip() if notes.strip() else None,
+                        "image_name": replace_img.name if replace_img is not None else None,
+                        "image_mime": replace_img.type if replace_img is not None else None,
+                        "image_blob": replace_img.getvalue() if replace_img is not None else None,
+                    }
+                    trade_journal_db.upsert_trade_samples(conn, [row])
+                    st.success("Alteracoes salvas.")

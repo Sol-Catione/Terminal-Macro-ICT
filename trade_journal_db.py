@@ -198,3 +198,23 @@ def fetch_image(conn: sqlite3.Connection, trade_id: str) -> tuple[bytes | None, 
         return None, None, None
     blob = row["image_blob"]
     return (bytes(blob) if blob is not None else None), row["image_mime"], row["image_name"]
+
+
+def delete_trade(conn: sqlite3.Connection, trade_id: str) -> None:
+    conn.execute("DELETE FROM trade_samples WHERE trade_id = ?", (trade_id,))
+    conn.commit()
+
+
+def update_image(
+    conn: sqlite3.Connection,
+    trade_id: str,
+    *,
+    image_blob: bytes | None,
+    image_mime: str | None,
+    image_name: str | None,
+) -> None:
+    conn.execute(
+        "UPDATE trade_samples SET image_blob = ?, image_mime = ?, image_name = ? WHERE trade_id = ?",
+        (image_blob, image_mime, image_name, trade_id),
+    )
+    conn.commit()
