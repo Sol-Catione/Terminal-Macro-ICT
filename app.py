@@ -174,4 +174,4 @@ with tab_private:
         render_private_xau_asia_entry_agent()
 
 st.markdown("---")
-st.caption("Terminal Macro ICT - V2.1 | Area privada + agentes")
+st.caption("Terminal Macro ICT - V2.1 | Area privada + agentes") 
